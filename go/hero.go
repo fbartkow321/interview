@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/gorilla/mux"
 )
@@ -56,10 +57,87 @@ type hero struct {
 	Alive      bool
 }
 
-// TODO: add storage and memory management
-var mapOfHeros = make(map[string]hero)
+type calamity struct {
+	PowerLevel int      `json:"PowerLevel"`
+	Heroes     []string `json:"Heroes"`
+}
 
-// TODO: add more routines
+type mapOfHeroes struct {
+	sync.RWMutex
+	actualMap map[string]hero
+}
+
+func (heroes *mapOfHeroes) load(key string) (value hero, ok bool) {
+	heroes.RLock()
+	result, ok := heroes.actualMap[key]
+	heroes.RUnlock()
+	return result, ok
+}
+
+func (heroes *mapOfHeroes) delete(key string) {
+	heroes.Lock()
+	delete(heroes.actualMap, key)
+	heroes.Unlock()
+}
+
+func (heroes *mapOfHeroes) store(key string, value hero) {
+	heroes.Lock()
+	heroes.actualMap[key] = value
+	heroes.Unlock()
+}
+
+var heroes mapOfHeroes
+
+func handleCalamity(w http.ResponseWriter, r *http.Request) {
+	content, readErr := ioutil.ReadAll(r.Body)
+	if readErr != nil {
+		http.Error(w, readErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	var calamity calamity
+	unmarshalErr := json.Unmarshal(content, &calamity)
+	if unmarshalErr != nil {
+		http.Error(w, unmarshalErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(calamity.Heroes) < 1 {
+		http.Error(w, "Must designate one or more heroes to address the calamity", http.StatusInternalServerError)
+		return
+	}
+
+	var heroesForCalamity []hero
+	var totalPowerLevel int
+	for _, heroName := range calamity.Heroes {
+		var hero hero
+		var heroExists bool
+		if hero, heroExists = heroes.load(heroName); !heroExists {
+			http.Error(w, "Hero with name "+heroName+" does not exist", http.StatusNotFound)
+			return
+		}
+		if hero.Alive == false {
+			http.Error(w, "Hero with name "+heroName+" is dead and can no longer fight", http.StatusNotFound)
+			return
+		}
+		totalPowerLevel += hero.PowerLevel
+		hero.Exhaustion++
+		if hero.Exhaustion == maxExhaustion {
+			hero.Alive = false
+		}
+		heroesForCalamity = append(heroesForCalamity, hero)
+	}
+
+	if calamity.PowerLevel == totalPowerLevel {
+		for _, hero := range heroesForCalamity {
+			heroes.store(hero.Name, hero)
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	http.Error(w, "Provided heros cannot tackle this calamity", http.StatusBadRequest)
+	return
+}
+
 func heroKill(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var ok bool
@@ -67,15 +145,14 @@ func heroKill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A name must be provided", http.StatusInternalServerError)
 		return
 	}
-	if _, heroExists := mapOfHeros[name]; !heroExists {
+	var hero hero
+	if hero, ok = heroes.load(name); !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
 		return
 	}
-	hero := mapOfHeros[name]
 	hero.Alive = false
-	mapOfHeros[name] = hero
+	heroes.store(name, hero)
 	w.WriteHeader(http.StatusOK)
-	return
 }
 
 func heroRetire(w http.ResponseWriter, r *http.Request) {
@@ -85,13 +162,17 @@ func heroRetire(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A name must be provided", http.StatusInternalServerError)
 		return
 	}
-	if _, heroExists := mapOfHeros[name]; !heroExists {
+	var hero hero
+	if hero, ok = heroes.load(name); !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
 		return
 	}
-	delete(mapOfHeros, name)
+	if hero.Alive != true {
+		http.Error(w, "Hero with name "+name+" has been killed, and thus cannot retire", http.StatusNotFound)
+		return
+	}
+	heroes.delete(name)
 	w.WriteHeader(http.StatusOK)
-	return
 }
 
 func heroRest(w http.ResponseWriter, r *http.Request) {
@@ -101,19 +182,18 @@ func heroRest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A name must be provided", http.StatusInternalServerError)
 		return
 	}
-	if _, heroExists := mapOfHeros[name]; !heroExists {
+	var hero hero
+	if hero, ok = heroes.load(name); !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
 		return
 	}
-	hero := mapOfHeros[name]
 	if hero.Exhaustion == 0 {
 		http.Error(w, "Hero with name "+name+" does not need rest", http.StatusBadRequest)
 		return
 	}
 	hero.Exhaustion--
-	mapOfHeros[name] = hero
+	heroes.store(name, hero)
 	w.WriteHeader(http.StatusOK)
-	return
 }
 
 func heroGet(w http.ResponseWriter, r *http.Request) {
@@ -123,12 +203,11 @@ func heroGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A name must be provided", http.StatusNotFound)
 		return
 	}
-
-	if _, heroExists := mapOfHeros[name]; !heroExists {
+	var hero hero
+	if hero, ok = heroes.load(name); !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
 		return
 	}
-	hero := mapOfHeros[name]
 
 	js, err := json.Marshal(hero)
 	if err != nil {
@@ -136,11 +215,9 @@ func heroGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	w.Write(js)
-
-	return
 }
 
 func heroMake(w http.ResponseWriter, r *http.Request) {
@@ -155,35 +232,47 @@ func heroMake(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, unmarshalErr.Error(), http.StatusInternalServerError)
 		return
 	}
-	if _, heroExists := mapOfHeros[hero.Name]; heroExists {
-		http.Error(w, "Hero with name "+hero.Name+" already exists", http.StatusConflict)
+	if hero, heroExists := heroes.load(hero.Name); heroExists {
+		if hero.Alive {
+			http.Error(w, "Hero with name "+hero.Name+" already exists", http.StatusConflict)
+		} else {
+			http.Error(w, "A hero named "+hero.Name+" once died valiantly in battle, and their name shall not be taken", http.StatusConflict)
+		}
 		return
 	}
 	hero.Alive = true
-	mapOfHeros[hero.Name] = hero
+	heroes.store(hero.Name, hero)
 	w.WriteHeader(http.StatusOK)
-	return
 }
 
 func linkRoutes(r *mux.Router) {
 	r.HandleFunc("/hero", heroMake).Methods("POST")
 	r.HandleFunc("/hero/{name}", heroGet).Methods("GET")
 	r.HandleFunc("/hero/rest/{name}", heroRest).Methods("PATCH")
-	r.HandleFunc("/hero/{name}", heroRetire).Methods("DELETE")
 	r.HandleFunc("/hero/kill/{name}", heroKill).Methods("PATCH")
-	// TODO: add more routes
+	r.HandleFunc("/hero/{name}", heroRetire).Methods("DELETE")
+
+	r.HandleFunc("/calamity", handleCalamity).Methods("POST")
 }
 
 func main() {
-	// create a router
+	// Create map to hold the heroes data
+	heroes = mapOfHeroes{
+		actualMap: make(map[string]hero),
+	}
+
+	// Create a router
 	router := mux.NewRouter()
-	// and a server to listen on port 8081
+
+	// Create a server to listen on port 8081
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", 8081),
 		Handler: router,
 	}
-	// link the supplied routes
+
+	// Link the supplied routes
 	linkRoutes(router)
-	// wait for requests
+
+	// Wait for requests
 	log.Fatal(server.ListenAndServe())
 }
