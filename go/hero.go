@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -52,37 +53,124 @@ type hero struct {
 	PowerLevel int    `json:"PowerLevel"`
 	Exhaustion int    `json:"Exhaustion"`
 	Name       string `json:"Name"`
-	// TODO: changeme?
+	Alive      bool
 }
 
 // TODO: add storage and memory management
+var mapOfHeros = make(map[string]hero)
 
 // TODO: add more routines
-
-func heroGet(w http.ResponseWriter, r *http.Request) {
-	// TODO: access the global tracking to return the hero object
+func heroKill(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var ok bool
 	if name, ok = mux.Vars(r)["name"]; !ok {
-		// TODO: Handle not ok
+		http.Error(w, "A name must be provided", http.StatusInternalServerError)
+		return
 	}
-	_ = name // TODO: something with name
-	w.WriteHeader(http.StatusNotImplemented)
+	if _, heroExists := mapOfHeros[name]; !heroExists {
+		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		return
+	}
+	hero := mapOfHeros[name]
+	hero.Alive = false
+	mapOfHeros[name] = hero
+	w.WriteHeader(http.StatusOK)
+	return
+}
+
+func heroRetire(w http.ResponseWriter, r *http.Request) {
+	var name string
+	var ok bool
+	if name, ok = mux.Vars(r)["name"]; !ok {
+		http.Error(w, "A name must be provided", http.StatusInternalServerError)
+		return
+	}
+	if _, heroExists := mapOfHeros[name]; !heroExists {
+		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		return
+	}
+	delete(mapOfHeros, name)
+	w.WriteHeader(http.StatusOK)
+	return
+}
+
+func heroRest(w http.ResponseWriter, r *http.Request) {
+	var name string
+	var ok bool
+	if name, ok = mux.Vars(r)["name"]; !ok {
+		http.Error(w, "A name must be provided", http.StatusInternalServerError)
+		return
+	}
+	if _, heroExists := mapOfHeros[name]; !heroExists {
+		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		return
+	}
+	hero := mapOfHeros[name]
+	if hero.Exhaustion == 0 {
+		http.Error(w, "Hero with name "+name+" does not need rest", http.StatusBadRequest)
+		return
+	}
+	hero.Exhaustion--
+	mapOfHeros[name] = hero
+	w.WriteHeader(http.StatusOK)
+	return
+}
+
+func heroGet(w http.ResponseWriter, r *http.Request) {
+	var name string
+	var ok bool
+	if name, ok = mux.Vars(r)["name"]; !ok {
+		http.Error(w, "A name must be provided", http.StatusNotFound)
+		return
+	}
+
+	if _, heroExists := mapOfHeros[name]; !heroExists {
+		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		return
+	}
+	hero := mapOfHeros[name]
+
+	js, err := json.Marshal(hero)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(js)
+
 	return
 }
 
 func heroMake(w http.ResponseWriter, r *http.Request) {
-	// TODO : create a hero and add to some sort of global tracking
-	content, err := ioutil.ReadAll(r.Body)
-	_ = content // TODO something with the body
-	_ = err     // TODO handle read error
-	w.WriteHeader(http.StatusNotImplemented)
+	content, readErr := ioutil.ReadAll(r.Body)
+	if readErr != nil {
+		http.Error(w, readErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	var hero hero
+	unmarshalErr := json.Unmarshal(content, &hero)
+	if unmarshalErr != nil {
+		http.Error(w, unmarshalErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, heroExists := mapOfHeros[hero.Name]; heroExists {
+		http.Error(w, "Hero with name "+hero.Name+" already exists", http.StatusConflict)
+		return
+	}
+	hero.Alive = true
+	mapOfHeros[hero.Name] = hero
+	w.WriteHeader(http.StatusOK)
 	return
 }
 
 func linkRoutes(r *mux.Router) {
 	r.HandleFunc("/hero", heroMake).Methods("POST")
 	r.HandleFunc("/hero/{name}", heroGet).Methods("GET")
+	r.HandleFunc("/hero/rest/{name}", heroRest).Methods("PATCH")
+	r.HandleFunc("/hero/{name}", heroRetire).Methods("DELETE")
+	r.HandleFunc("/hero/kill/{name}", heroKill).Methods("PATCH")
 	// TODO: add more routes
 }
 
