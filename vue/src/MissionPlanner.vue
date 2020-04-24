@@ -5,24 +5,23 @@
 
     <ul class="roster">
       <h3>Roster:</h3>
-      <li v-for="hero in heroes"
-          :key="hero.name">
-
+      <li v-for="hero in heroes" :key="hero.name">
         <!-- to do: conditionally display this span -->
         <span>✔ &nbsp;</span>
 
         <span>{{ hero.name }}&nbsp;</span>
-        <span class="edit"
-              @click="editHero(hero)">edit</span>
+        <span class="edit" @click="editHero(hero)">edit</span>
       </li>
-      <br>
-      <input type="text"
-             placeholder="new name"
-             v-model="newName"
-             v-if="isEdit"
-             @keyup.enter="changeName"
-             @blur="clear">
-      <br>
+      <br />
+      <input
+        type="text"
+        placeholder="new name"
+        v-model="newName"
+        v-if="isEdit"
+        @keyup.enter="changeName"
+        @blur="clear"
+      />
+      <br />
       <span v-if="isEdit">enter to submit, click outside the box to cancel</span>
     </ul>
     <ChosenHeroes :heroes="heroes" />

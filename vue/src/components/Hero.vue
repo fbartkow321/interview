@@ -1,10 +1,10 @@
 <template>
-    <div class="card">
-        <h3 class="close" @click="$emit('removeHero')">&times;</h3>
-        <h1>{{ hero.name }}</h1>
-    </div>
+  <div class="card">
+    <h3 class="close" @click="$emit('removeHero')">&times;</h3>
+    <h1>{{ hero.name }}</h1>
+  </div>
 </template>
-
+ 
 <script>
 export default {
   props: ["hero"]
@@ -19,10 +19,10 @@ export default {
   width: 500px;
 }
 .card h3 {
-    text-align: end;
-    margin-right: 1em;
+  text-align: end;
+  margin-right: 1em;
 }
 .card h3:hover {
-    cursor: pointer;
+  cursor: pointer;
 }
 </style>
