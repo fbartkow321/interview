@@ -115,7 +115,7 @@ func handleCalamity(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if hero.Alive == false {
-			http.Error(w, "Hero with name "+heroName+" is dead and can no longer fight", http.StatusNotFound)
+			http.Error(w, "Hero with name "+heroName+" is dead and can no longer fight", http.StatusBadRequest)
 			return
 		}
 		totalPowerLevel += hero.PowerLevel
@@ -133,8 +133,8 @@ func handleCalamity(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-
-	http.Error(w, "Provided heros cannot tackle this calamity", http.StatusBadRequest)
+	errMessage := "Powerlevel of calamity and total powerlevel of heroes are not equal. This calamity cannot be addressed."
+	http.Error(w, errMessage, http.StatusBadRequest)
 	return
 }
 
@@ -142,12 +142,16 @@ func heroKill(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var ok bool
 	if name, ok = mux.Vars(r)["name"]; !ok {
-		http.Error(w, "A name must be provided", http.StatusInternalServerError)
+		http.Error(w, "A name must be provided (ex: /hero/kill/{name})", http.StatusBadRequest)
 		return
 	}
 	var hero hero
 	if hero, ok = heroes.load(name); !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		return
+	}
+	if hero.Alive != true {
+		http.Error(w, "Hero with name "+name+" has already been killed, and thus cannot be killed again", http.StatusBadRequest)
 		return
 	}
 	hero.Alive = false
@@ -159,7 +163,7 @@ func heroRetire(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var ok bool
 	if name, ok = mux.Vars(r)["name"]; !ok {
-		http.Error(w, "A name must be provided", http.StatusInternalServerError)
+		http.Error(w, "A name must be provided (ex: /hero/{name})", http.StatusBadRequest)
 		return
 	}
 	var hero hero
@@ -168,7 +172,7 @@ func heroRetire(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if hero.Alive != true {
-		http.Error(w, "Hero with name "+name+" has been killed, and thus cannot retire", http.StatusNotFound)
+		http.Error(w, "Hero with name "+name+" has been killed, and thus cannot retire", http.StatusBadRequest)
 		return
 	}
 	heroes.delete(name)
@@ -179,12 +183,16 @@ func heroRest(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var ok bool
 	if name, ok = mux.Vars(r)["name"]; !ok {
-		http.Error(w, "A name must be provided", http.StatusInternalServerError)
+		http.Error(w, "A name must be provided (ex: /hero/rest/{name})", http.StatusBadRequest)
 		return
 	}
 	var hero hero
 	if hero, ok = heroes.load(name); !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		return
+	}
+	if hero.Alive == false {
+		http.Error(w, "Hero with name "+name+" is dead, and thus can not rest", http.StatusBadRequest)
 		return
 	}
 	if hero.Exhaustion == 0 {
@@ -200,7 +208,7 @@ func heroGet(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var ok bool
 	if name, ok = mux.Vars(r)["name"]; !ok {
-		http.Error(w, "A name must be provided", http.StatusNotFound)
+		http.Error(w, "A name must be provided (ex: /hero/{name})", http.StatusBadRequest)
 		return
 	}
 	var hero hero
