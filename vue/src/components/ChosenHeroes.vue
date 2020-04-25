@@ -5,10 +5,16 @@
       <option :value="null">Select a hero</option>
 
       <!-- available heroes -->
-      <option v-for="hero in heroes" :key="hero.name" :value="hero.name">{{ hero.name }}</option>
+      <option
+        v-for="hero in heroes.filter(hero => !hero.chosen)"
+        :key="hero.name"
+        :value="hero"
+      >{{ hero.name }}</option>
     </select>
     <span>&nbsp;</span>
     <button @click="addHero(chosenHero)" :disabled="chosenHero === null">Add Hero</button>
+    <span>&nbsp;</span>
+    <button @click="launchMission()">Launch Mission</button>
     <br />
     <h3>Chosen Heroes</h3>
     <div class="chosen-heroes">
@@ -27,7 +33,7 @@ export default {
   components: {
     Hero
   },
-  props: ["heroes"],
+  props: { heroes: Array },
   data() {
     return {
       chosenHero: null,
@@ -35,13 +41,29 @@ export default {
     };
   },
   methods: {
-    addHero(name) {
-      this.chosenHeroes.push({ name });
-      this.chosenHero = null;
+    addHero(hero) {
+      if (this.chosenHeroes.length < 3) {
+        this.chosenHeroes.push({ hero });
+        hero.chosen = true;
+        this.chosenHero = null;
+      } else {
+        alert("Only three heroes per mission");
+      }
     },
 
     removeHero(hero) {
-      this.chosenHeroes = this.chosenHeroes.filter(h => h.name != hero.name);
+      this.chosenHeroes = this.chosenHeroes.filter(
+        h => h.hero.name != hero.hero.name
+      );
+      hero.hero.chosen = false;
+    },
+
+    launchMission() {
+      if (this.chosenHeroes.length !== 3) {
+        alert("We need three heroes");
+      } else {
+        alert("Mission complete");
+      }
     }
   }
 };
