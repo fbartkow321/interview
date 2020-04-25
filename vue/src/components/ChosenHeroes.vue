@@ -18,7 +18,7 @@
     <br />
     <h3>Chosen Heroes</h3>
     <div class="chosen-heroes">
-      <div v-for="(hero, i) in chosenHeroes" :key="hero.name">
+      <div v-for="(hero, i) in heroes.filter(hero => hero.chosen)" :key="hero.name">
         <strong>Slot {{ i + 1 }}:</strong>
         <Hero :hero="hero" @removeHero="removeHero(hero)" />
       </div>
@@ -36,30 +36,27 @@ export default {
   props: { heroes: Array },
   data() {
     return {
-      chosenHero: null,
-      chosenHeroes: []
+      chosenHero: null
     };
   },
   methods: {
     addHero(hero) {
-      if (this.chosenHeroes.length < 3) {
-        this.chosenHeroes.push({ hero });
+      const chosenHeroes = this.heroes.filter(hero => hero.chosen).length;
+      if (chosenHeroes < 3) {
         hero.chosen = true;
-        this.chosenHero = null;
       } else {
         alert("Only three heroes per mission");
       }
+      this.chosenHero = null;
     },
 
     removeHero(hero) {
-      this.chosenHeroes = this.chosenHeroes.filter(
-        h => h.hero.name != hero.hero.name
-      );
-      hero.hero.chosen = false;
+      hero.chosen = false;
     },
 
     launchMission() {
-      if (this.chosenHeroes.length !== 3) {
+      const chosenHeroes = this.heroes.filter(hero => hero.chosen).length;
+      if (chosenHeroes !== 3) {
         alert("We need three heroes");
       } else {
         alert("Mission complete");

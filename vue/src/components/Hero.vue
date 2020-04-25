@@ -1,7 +1,7 @@
 <template>
   <div class="card">
     <h3 class="close" @click="$emit('removeHero')">&times;</h3>
-    <h1>{{ hero.hero.name }}</h1>
+    <h1>{{ hero.name }}</h1>
   </div>
 </template>
  
