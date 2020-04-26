@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"sync"
 
 	"github.com/gorilla/mux"
 )
@@ -62,31 +61,7 @@ type calamity struct {
 	Heroes     []string `json:"Heroes"`
 }
 
-type mapOfHeroes struct {
-	sync.RWMutex
-	actualMap map[string]hero
-}
-
-func (heroes *mapOfHeroes) load(key string) (value hero, ok bool) {
-	heroes.RLock()
-	result, ok := heroes.actualMap[key]
-	heroes.RUnlock()
-	return result, ok
-}
-
-func (heroes *mapOfHeroes) delete(key string) {
-	heroes.Lock()
-	delete(heroes.actualMap, key)
-	heroes.Unlock()
-}
-
-func (heroes *mapOfHeroes) store(key string, value hero) {
-	heroes.Lock()
-	heroes.actualMap[key] = value
-	heroes.Unlock()
-}
-
-var heroes mapOfHeroes
+var heroMapChannel chan map[string]hero
 
 func handleCalamity(w http.ResponseWriter, r *http.Request) {
 	content, readErr := ioutil.ReadAll(r.Body)
@@ -105,17 +80,21 @@ func handleCalamity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mapOfHeroes := <-heroMapChannel
+
 	var heroesForCalamity []hero
 	var totalPowerLevel int
 	for _, heroName := range calamity.Heroes {
 		var hero hero
 		var heroExists bool
-		if hero, heroExists = heroes.load(heroName); !heroExists {
+		if hero, heroExists = mapOfHeroes[heroName]; !heroExists {
 			http.Error(w, "Hero with name "+heroName+" does not exist", http.StatusNotFound)
+			heroMapChannel <- mapOfHeroes
 			return
 		}
 		if hero.Alive == false {
 			http.Error(w, "Hero with name "+heroName+" is dead and can no longer fight", http.StatusBadRequest)
+			heroMapChannel <- mapOfHeroes
 			return
 		}
 		totalPowerLevel += hero.PowerLevel
@@ -128,13 +107,15 @@ func handleCalamity(w http.ResponseWriter, r *http.Request) {
 
 	if calamity.PowerLevel == totalPowerLevel {
 		for _, hero := range heroesForCalamity {
-			heroes.store(hero.Name, hero)
+			mapOfHeroes[hero.Name] = hero
 		}
 		w.WriteHeader(http.StatusOK)
+		heroMapChannel <- mapOfHeroes
 		return
 	}
 	errMessage := "Powerlevel of calamity and total powerlevel of heroes are not equal. This calamity cannot be addressed."
 	http.Error(w, errMessage, http.StatusBadRequest)
+	heroMapChannel <- mapOfHeroes
 	return
 }
 
@@ -145,17 +126,23 @@ func heroKill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A name must be provided (ex: /hero/kill/{name})", http.StatusBadRequest)
 		return
 	}
+
+	mapOfHeroes := <-heroMapChannel
+
 	var hero hero
-	if hero, ok = heroes.load(name); !ok {
+	if hero, ok = mapOfHeroes[name]; !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		heroMapChannel <- mapOfHeroes
 		return
 	}
 	if hero.Alive != true {
 		http.Error(w, "Hero with name "+name+" has already been killed, and thus cannot be killed again", http.StatusBadRequest)
+		heroMapChannel <- mapOfHeroes
 		return
 	}
 	hero.Alive = false
-	heroes.store(name, hero)
+	mapOfHeroes[name] = hero
+	heroMapChannel <- mapOfHeroes
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -166,16 +153,22 @@ func heroRetire(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A name must be provided (ex: /hero/{name})", http.StatusBadRequest)
 		return
 	}
+
+	mapOfHeroes := <-heroMapChannel
+
 	var hero hero
-	if hero, ok = heroes.load(name); !ok {
+	if hero, ok = mapOfHeroes[name]; !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		heroMapChannel <- mapOfHeroes
 		return
 	}
 	if hero.Alive != true {
 		http.Error(w, "Hero with name "+name+" has been killed, and thus cannot retire", http.StatusBadRequest)
+		heroMapChannel <- mapOfHeroes
 		return
 	}
-	heroes.delete(name)
+	delete(mapOfHeroes, name)
+	heroMapChannel <- mapOfHeroes
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -186,21 +179,28 @@ func heroRest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A name must be provided (ex: /hero/rest/{name})", http.StatusBadRequest)
 		return
 	}
+
+	mapOfHeroes := <-heroMapChannel
+
 	var hero hero
-	if hero, ok = heroes.load(name); !ok {
+	if hero, ok = mapOfHeroes[name]; !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+		heroMapChannel <- mapOfHeroes
 		return
 	}
 	if hero.Alive == false {
 		http.Error(w, "Hero with name "+name+" is dead, and thus can not rest", http.StatusBadRequest)
+		heroMapChannel <- mapOfHeroes
 		return
 	}
 	if hero.Exhaustion == 0 {
 		http.Error(w, "Hero with name "+name+" does not need rest", http.StatusBadRequest)
+		heroMapChannel <- mapOfHeroes
 		return
 	}
 	hero.Exhaustion--
-	heroes.store(name, hero)
+	mapOfHeroes[name] = hero
+	heroMapChannel <- mapOfHeroes
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -211,8 +211,13 @@ func heroGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A name must be provided (ex: /hero/{name})", http.StatusBadRequest)
 		return
 	}
+
+	mapOfHeroes := <-heroMapChannel
 	var hero hero
-	if hero, ok = heroes.load(name); !ok {
+	hero, ok = mapOfHeroes[name]
+	// Return map to channel ASAP to prevent blocking other threads
+	heroMapChannel <- mapOfHeroes
+	if !ok {
 		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
 		return
 	}
@@ -240,16 +245,21 @@ func heroMake(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, unmarshalErr.Error(), http.StatusInternalServerError)
 		return
 	}
-	if hero, heroExists := heroes.load(hero.Name); heroExists {
+
+	mapOfHeroes := <-heroMapChannel
+
+	if hero, heroExists := mapOfHeroes[hero.Name]; heroExists {
 		if hero.Alive {
 			http.Error(w, "Hero with name "+hero.Name+" already exists", http.StatusConflict)
 		} else {
 			http.Error(w, "A hero named "+hero.Name+" once died valiantly in battle, and their name shall not be taken", http.StatusConflict)
 		}
+		heroMapChannel <- mapOfHeroes
 		return
 	}
 	hero.Alive = true
-	heroes.store(hero.Name, hero)
+	mapOfHeroes[hero.Name] = hero
+	heroMapChannel <- mapOfHeroes
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -264,10 +274,9 @@ func linkRoutes(r *mux.Router) {
 }
 
 func main() {
-	// Create map to hold the heroes data
-	heroes = mapOfHeroes{
-		actualMap: make(map[string]hero),
-	}
+	// Initalize channel & map to hold the heroes data
+	heroMapChannel = make(chan map[string]hero, 1)
+	heroMapChannel <- make(map[string]hero)
 
 	// Create a router
 	router := mux.NewRouter()
