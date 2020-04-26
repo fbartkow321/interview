@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -80,43 +81,45 @@ func handleCalamity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mapOfHeroes := <-heroMapChannel
+	select {
+	case mapOfHeroes := <-heroMapChannel:
+		var heroesForCalamity []hero
+		var totalPowerLevel int
+		for _, heroName := range calamity.Heroes {
+			var hero hero
+			var heroExists bool
+			if hero, heroExists = mapOfHeroes[heroName]; !heroExists {
+				http.Error(w, "Hero with name "+heroName+" does not exist", http.StatusNotFound)
+				heroMapChannel <- mapOfHeroes
+				return
+			}
+			if hero.Alive == false {
+				http.Error(w, "Hero with name "+heroName+" is dead and can no longer fight", http.StatusBadRequest)
+				heroMapChannel <- mapOfHeroes
+				return
+			}
+			totalPowerLevel += hero.PowerLevel
+			hero.Exhaustion++
+			if hero.Exhaustion == maxExhaustion {
+				hero.Alive = false
+			}
+			heroesForCalamity = append(heroesForCalamity, hero)
+		}
 
-	var heroesForCalamity []hero
-	var totalPowerLevel int
-	for _, heroName := range calamity.Heroes {
-		var hero hero
-		var heroExists bool
-		if hero, heroExists = mapOfHeroes[heroName]; !heroExists {
-			http.Error(w, "Hero with name "+heroName+" does not exist", http.StatusNotFound)
+		if calamity.PowerLevel == totalPowerLevel {
+			for _, hero := range heroesForCalamity {
+				mapOfHeroes[hero.Name] = hero
+			}
+			w.WriteHeader(http.StatusOK)
 			heroMapChannel <- mapOfHeroes
 			return
 		}
-		if hero.Alive == false {
-			http.Error(w, "Hero with name "+heroName+" is dead and can no longer fight", http.StatusBadRequest)
-			heroMapChannel <- mapOfHeroes
-			return
-		}
-		totalPowerLevel += hero.PowerLevel
-		hero.Exhaustion++
-		if hero.Exhaustion == maxExhaustion {
-			hero.Alive = false
-		}
-		heroesForCalamity = append(heroesForCalamity, hero)
-	}
-
-	if calamity.PowerLevel == totalPowerLevel {
-		for _, hero := range heroesForCalamity {
-			mapOfHeroes[hero.Name] = hero
-		}
-		w.WriteHeader(http.StatusOK)
+		errMessage := "Powerlevel of calamity and total powerlevel of heroes are not equal. This calamity cannot be addressed."
+		http.Error(w, errMessage, http.StatusBadRequest)
 		heroMapChannel <- mapOfHeroes
-		return
+	case <-time.After(3 * time.Second):
+		http.Error(w, "Resource not available - Cannot access Hero Data", http.StatusInternalServerError)
 	}
-	errMessage := "Powerlevel of calamity and total powerlevel of heroes are not equal. This calamity cannot be addressed."
-	http.Error(w, errMessage, http.StatusBadRequest)
-	heroMapChannel <- mapOfHeroes
-	return
 }
 
 func heroKill(w http.ResponseWriter, r *http.Request) {
@@ -127,23 +130,27 @@ func heroKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mapOfHeroes := <-heroMapChannel
+	select {
+	case mapOfHeroes := <-heroMapChannel:
+		var hero hero
+		if hero, ok = mapOfHeroes[name]; !ok {
+			http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+			heroMapChannel <- mapOfHeroes
+			return
+		}
+		if hero.Alive != true {
+			http.Error(w, "Hero with name "+name+" has already been killed, and thus cannot be killed again", http.StatusBadRequest)
+			heroMapChannel <- mapOfHeroes
+			return
+		}
+		hero.Alive = false
+		mapOfHeroes[name] = hero
+		heroMapChannel <- mapOfHeroes
+		w.WriteHeader(http.StatusOK)
+	case <-time.After(3 * time.Second):
+		http.Error(w, "Resource not available - Cannot access Hero Data", http.StatusInternalServerError)
+	}
 
-	var hero hero
-	if hero, ok = mapOfHeroes[name]; !ok {
-		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
-		heroMapChannel <- mapOfHeroes
-		return
-	}
-	if hero.Alive != true {
-		http.Error(w, "Hero with name "+name+" has already been killed, and thus cannot be killed again", http.StatusBadRequest)
-		heroMapChannel <- mapOfHeroes
-		return
-	}
-	hero.Alive = false
-	mapOfHeroes[name] = hero
-	heroMapChannel <- mapOfHeroes
-	w.WriteHeader(http.StatusOK)
 }
 
 func heroRetire(w http.ResponseWriter, r *http.Request) {
@@ -154,22 +161,25 @@ func heroRetire(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mapOfHeroes := <-heroMapChannel
-
-	var hero hero
-	if hero, ok = mapOfHeroes[name]; !ok {
-		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+	select {
+	case mapOfHeroes := <-heroMapChannel:
+		var hero hero
+		if hero, ok = mapOfHeroes[name]; !ok {
+			http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+			heroMapChannel <- mapOfHeroes
+			return
+		}
+		if hero.Alive != true {
+			http.Error(w, "Hero with name "+name+" has been killed, and thus cannot retire", http.StatusBadRequest)
+			heroMapChannel <- mapOfHeroes
+			return
+		}
+		delete(mapOfHeroes, name)
 		heroMapChannel <- mapOfHeroes
-		return
+		w.WriteHeader(http.StatusOK)
+	case <-time.After(3 * time.Second):
+		http.Error(w, "Resource not available - Cannot access Hero Data", http.StatusInternalServerError)
 	}
-	if hero.Alive != true {
-		http.Error(w, "Hero with name "+name+" has been killed, and thus cannot retire", http.StatusBadRequest)
-		heroMapChannel <- mapOfHeroes
-		return
-	}
-	delete(mapOfHeroes, name)
-	heroMapChannel <- mapOfHeroes
-	w.WriteHeader(http.StatusOK)
 }
 
 func heroRest(w http.ResponseWriter, r *http.Request) {
@@ -180,28 +190,31 @@ func heroRest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mapOfHeroes := <-heroMapChannel
-
-	var hero hero
-	if hero, ok = mapOfHeroes[name]; !ok {
-		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+	select {
+	case mapOfHeroes := <-heroMapChannel:
+		var hero hero
+		if hero, ok = mapOfHeroes[name]; !ok {
+			http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+			heroMapChannel <- mapOfHeroes
+			return
+		}
+		if hero.Alive == false {
+			http.Error(w, "Hero with name "+name+" is dead, and thus can not rest", http.StatusBadRequest)
+			heroMapChannel <- mapOfHeroes
+			return
+		}
+		if hero.Exhaustion == 0 {
+			http.Error(w, "Hero with name "+name+" does not need rest", http.StatusBadRequest)
+			heroMapChannel <- mapOfHeroes
+			return
+		}
+		hero.Exhaustion--
+		mapOfHeroes[name] = hero
 		heroMapChannel <- mapOfHeroes
-		return
+		w.WriteHeader(http.StatusOK)
+	case <-time.After(3 * time.Second):
+		http.Error(w, "Resource not available - Cannot access Hero Data", http.StatusInternalServerError)
 	}
-	if hero.Alive == false {
-		http.Error(w, "Hero with name "+name+" is dead, and thus can not rest", http.StatusBadRequest)
-		heroMapChannel <- mapOfHeroes
-		return
-	}
-	if hero.Exhaustion == 0 {
-		http.Error(w, "Hero with name "+name+" does not need rest", http.StatusBadRequest)
-		heroMapChannel <- mapOfHeroes
-		return
-	}
-	hero.Exhaustion--
-	mapOfHeroes[name] = hero
-	heroMapChannel <- mapOfHeroes
-	w.WriteHeader(http.StatusOK)
 }
 
 func heroGet(w http.ResponseWriter, r *http.Request) {
@@ -212,25 +225,29 @@ func heroGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mapOfHeroes := <-heroMapChannel
-	var hero hero
-	hero, ok = mapOfHeroes[name]
-	// Return map to channel ASAP to prevent blocking other threads
-	heroMapChannel <- mapOfHeroes
-	if !ok {
-		http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
-		return
-	}
+	select {
+	case mapOfHeroes := <-heroMapChannel:
+		var hero hero
+		hero, ok = mapOfHeroes[name]
+		// Return map to channel ASAP to prevent blocking other threads
+		heroMapChannel <- mapOfHeroes
+		if !ok {
+			http.Error(w, "Hero with name "+name+" does not exist", http.StatusNotFound)
+			return
+		}
 
-	js, err := json.Marshal(hero)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+		js, err := json.Marshal(hero)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(js)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(js)
+	case <-time.After(3 * time.Second):
+		http.Error(w, "Resource not available - Cannot access Hero Data", http.StatusInternalServerError)
+	}
 }
 
 func heroMake(w http.ResponseWriter, r *http.Request) {
@@ -246,21 +263,24 @@ func heroMake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mapOfHeroes := <-heroMapChannel
-
-	if hero, heroExists := mapOfHeroes[hero.Name]; heroExists {
-		if hero.Alive {
-			http.Error(w, "Hero with name "+hero.Name+" already exists", http.StatusConflict)
-		} else {
-			http.Error(w, "A hero named "+hero.Name+" once died valiantly in battle, and their name shall not be taken", http.StatusConflict)
+	select {
+	case mapOfHeroes := <-heroMapChannel:
+		if hero, heroExists := mapOfHeroes[hero.Name]; heroExists {
+			if hero.Alive {
+				http.Error(w, "Hero with name "+hero.Name+" already exists", http.StatusConflict)
+			} else {
+				http.Error(w, "A hero named "+hero.Name+" once died valiantly in battle, and their name shall not be taken", http.StatusConflict)
+			}
+			heroMapChannel <- mapOfHeroes
+			return
 		}
+		hero.Alive = true
+		mapOfHeroes[hero.Name] = hero
 		heroMapChannel <- mapOfHeroes
-		return
+		w.WriteHeader(http.StatusOK)
+	case <-time.After(3 * time.Second):
+		http.Error(w, "Resource not available - Cannot access Hero Data", http.StatusInternalServerError)
 	}
-	hero.Alive = true
-	mapOfHeroes[hero.Name] = hero
-	heroMapChannel <- mapOfHeroes
-	w.WriteHeader(http.StatusOK)
 }
 
 func linkRoutes(r *mux.Router) {
